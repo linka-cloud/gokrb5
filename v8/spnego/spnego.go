@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jcmturner/gofork/encoding/asn1"
+
 	"github.com/jcmturner/gokrb5/v8/asn1tools"
 	"github.com/jcmturner/gokrb5/v8/client"
 	"github.com/jcmturner/gokrb5/v8/gssapi"
@@ -53,7 +54,7 @@ func (s *SPNEGO) InitSecContext() (gssapi.ContextToken, error) {
 	if err != nil {
 		return &SPNEGOToken{}, err
 	}
-	negTokenInit, err := NewNegTokenInitKRB5(s.client, tkt, key)
+	negTokenInit, err := NewNegTokenInitKRB5(s.client.Credentials.CName(), s.client.Credentials.Domain(), tkt, key)
 	if err != nil {
 		return &SPNEGOToken{}, fmt.Errorf("could not create NegTokenInit: %v", err)
 	}

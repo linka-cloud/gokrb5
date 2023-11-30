@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/jcmturner/gofork/encoding/asn1"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/jcmturner/gokrb5/v8/client"
 	"github.com/jcmturner/gokrb5/v8/credentials"
 	"github.com/jcmturner/gokrb5/v8/gssapi"
@@ -14,7 +16,6 @@ import (
 	"github.com/jcmturner/gokrb5/v8/messages"
 	"github.com/jcmturner/gokrb5/v8/test/testdata"
 	"github.com/jcmturner/gokrb5/v8/types"
-	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -57,7 +58,7 @@ func TestKRB5Token_newAuthenticatorWithSubkeyGeneration(t *testing.T) {
 	creds.SetCName(types.PrincipalName{NameType: nametype.KRB_NT_PRINCIPAL, NameString: testdata.TEST_PRINCIPALNAME_NAMESTRING})
 	var etypeID int32 = 18
 	keyLen := 32 // etypeID 18 refers to AES256 -> 32 bytes key
-	a, err := krb5TokenAuthenticator(creds, []int{gssapi.ContextFlagInteg, gssapi.ContextFlagConf})
+	a, err := krb5TokenAuthenticator(creds.CName(), creds.Domain(), []int{gssapi.ContextFlagInteg, gssapi.ContextFlagConf})
 	if err != nil {
 		t.Fatalf("Error creating authenticator: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestKRB5Token_newAuthenticator(t *testing.T) {
 	t.Parallel()
 	creds := credentials.New("hftsai", testdata.TEST_REALM)
 	creds.SetCName(types.PrincipalName{NameType: nametype.KRB_NT_PRINCIPAL, NameString: testdata.TEST_PRINCIPALNAME_NAMESTRING})
-	a, err := krb5TokenAuthenticator(creds, []int{gssapi.ContextFlagInteg, gssapi.ContextFlagConf})
+	a, err := krb5TokenAuthenticator(creds.CName(), creds.Domain(), []int{gssapi.ContextFlagInteg, gssapi.ContextFlagConf})
 	if err != nil {
 		t.Fatalf("Error creating authenticator: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestNewAPREQKRB5Token_and_Marshal(t *testing.T) {
 		KeyValue: make([]byte, 32),
 	}
 
-	mt, err := NewKRB5TokenAPREQ(&cl, tkt, key, []int{gssapi.ContextFlagInteg, gssapi.ContextFlagConf}, []int{})
+	mt, err := NewKRB5TokenAPREQ(cl.Credentials.CName(), cl.Credentials.Domain(), tkt, key, []int{gssapi.ContextFlagInteg, gssapi.ContextFlagConf}, []int{})
 	if err != nil {
 		t.Fatalf("Error creating KRB5Token: %v", err)
 	}

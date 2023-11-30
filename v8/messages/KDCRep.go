@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jcmturner/gofork/encoding/asn1"
+
 	"github.com/jcmturner/gokrb5/v8/asn1tools"
 	"github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/credentials"
@@ -87,7 +88,7 @@ func (k *ASRep) Unmarshal(b []byte) error {
 	if m.MsgType != msgtype.KRB_AS_REP {
 		return krberror.NewErrorf(krberror.KRBMsgError, "message ID does not indicate an AS_REP. Expected: %v; Actual: %v", msgtype.KRB_AS_REP, m.MsgType)
 	}
-	//Process the raw ticket within
+	// Process the raw ticket within
 	tkt, err := unmarshalTicket(m.Ticket.Bytes)
 	if err != nil {
 		return krberror.Errorf(err, krberror.EncodingError, "error unmarshaling Ticket within AS_REP")
@@ -142,7 +143,7 @@ func (k *TGSRep) Unmarshal(b []byte) error {
 	if m.MsgType != msgtype.KRB_TGS_REP {
 		return krberror.NewErrorf(krberror.KRBMsgError, "message ID does not indicate an TGS_REP. Expected: %v; Actual: %v", msgtype.KRB_TGS_REP, m.MsgType)
 	}
-	//Process the raw ticket within
+	// Process the raw ticket within
 	tkt, err := unmarshalTicket(m.Ticket.Bytes)
 	if err != nil {
 		return krberror.Errorf(err, krberror.EncodingError, "error unmarshaling Ticket within TGS_REP")
@@ -246,7 +247,7 @@ func (k *ASRep) DecryptEncPart(c *credentials.Credentials) (types.EncryptionKey,
 
 // Verify checks the validity of AS_REP message.
 func (k *ASRep) Verify(cfg *config.Config, creds *credentials.Credentials, asReq ASReq) (bool, error) {
-	//Ref RFC 4120 Section 3.1.5
+	// Ref RFC 4120 Section 3.1.5
 	if !k.CName.Equal(asReq.ReqBody.CName) {
 		return false, krberror.NewErrorf(krberror.KRBMsgError, "CName in response does not match what was requested. Requested: %+v; Reply: %+v", asReq.ReqBody.CName, k.CName)
 	}
@@ -317,9 +318,20 @@ func (k *TGSRep) DecryptEncPart(key types.EncryptionKey) error {
 }
 
 // Verify checks the validity of the TGS_REP message.
-func (k *TGSRep) Verify(cfg *config.Config, tgsReq TGSReq) (bool, error) {
-	if !k.CName.Equal(tgsReq.ReqBody.CName) {
+func (k *TGSRep) Verify(cfg *config.Config, tgsReq TGSReq, impersonated types.PrincipalName) (bool, error) {
+	// normal case
+	if impersonated.IsZero() && !k.CName.Equal(tgsReq.ReqBody.CName) {
 		return false, krberror.NewErrorf(krberror.KRBMsgError, "CName in response does not match what was requested. Requested: %+v; Reply: %+v", tgsReq.ReqBody.CName, k.CName)
+	}
+	// s4u2self case
+	if !impersonated.IsZero() {
+		if !k.CName.Equal(impersonated) {
+			return false, krberror.NewErrorf(krberror.KRBMsgError, "SName in response does not match what was requested. Requested: %+v; Reply: %+v", tgsReq.ReqBody.CName, k.CName)
+		}
+		// reject non forwardable tickets
+		if !types.IsFlagSet(&k.DecryptedEncPart.Flags, flags.Forwardable) {
+			return false, krberror.NewErrorf(krberror.KRBMsgError, "S42Self TGS_REP is not forwardable")
+		}
 	}
 	if k.Ticket.Realm != tgsReq.ReqBody.Realm {
 		return false, krberror.NewErrorf(krberror.KRBMsgError, "realm in response ticket does not match what was requested. Requested: %s; Reply: %s", tgsReq.ReqBody.Realm, k.Ticket.Realm)
@@ -327,22 +339,22 @@ func (k *TGSRep) Verify(cfg *config.Config, tgsReq TGSReq) (bool, error) {
 	if k.DecryptedEncPart.Nonce != tgsReq.ReqBody.Nonce {
 		return false, krberror.NewErrorf(krberror.KRBMsgError, "possible replay attack, nonce in response does not match that in request")
 	}
-	//if k.Ticket.SName.NameType != tgsReq.ReqBody.SName.NameType || k.Ticket.SName.NameString == nil {
+	// if k.Ticket.SName.NameType != tgsReq.ReqBody.SName.NameType || k.Ticket.SName.NameString == nil {
 	//	return false, krberror.NewErrorf(krberror.KRBMsgError, "SName in response ticket does not match what was requested. Requested: %v; Reply: %v", tgsReq.ReqBody.SName, k.Ticket.SName)
-	//}
-	//for i := range k.Ticket.SName.NameString {
+	// }
+	// for i := range k.Ticket.SName.NameString {
 	//	if k.Ticket.SName.NameString[i] != tgsReq.ReqBody.SName.NameString[i] {
 	//		return false, krberror.NewErrorf(krberror.KRBMsgError, "SName in response ticket does not match what was requested. Requested: %+v; Reply: %+v", tgsReq.ReqBody.SName, k.Ticket.SName)
 	//	}
-	//}
-	//if k.DecryptedEncPart.SName.NameType != tgsReq.ReqBody.SName.NameType || k.DecryptedEncPart.SName.NameString == nil {
+	// }
+	// if k.DecryptedEncPart.SName.NameType != tgsReq.ReqBody.SName.NameType || k.DecryptedEncPart.SName.NameString == nil {
 	//	return false, krberror.NewErrorf(krberror.KRBMsgError, "SName in response does not match what was requested. Requested: %v; Reply: %v", tgsReq.ReqBody.SName, k.DecryptedEncPart.SName)
-	//}
-	//for i := range k.DecryptedEncPart.SName.NameString {
+	// }
+	// for i := range k.DecryptedEncPart.SName.NameString {
 	//	if k.DecryptedEncPart.SName.NameString[i] != tgsReq.ReqBody.SName.NameString[i] {
 	//		return false, krberror.NewErrorf(krberror.KRBMsgError, "SName in response does not match what was requested. Requested: %+v; Reply: %+v", tgsReq.ReqBody.SName, k.DecryptedEncPart.SName)
 	//	}
-	//}
+	// }
 	if k.DecryptedEncPart.SRealm != tgsReq.ReqBody.Realm {
 		return false, krberror.NewErrorf(krberror.KRBMsgError, "SRealm in response does not match what was requested. Requested: %s; Reply: %s", tgsReq.ReqBody.Realm, k.DecryptedEncPart.SRealm)
 	}

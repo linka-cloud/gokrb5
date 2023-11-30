@@ -38,13 +38,17 @@ func (pn PrincipalName) Equal(n PrincipalName) bool {
 	if len(pn.NameString) != len(n.NameString) {
 		return false
 	}
-	//https://tools.ietf.org/html/rfc4120#section-6.2 - the name type is not significant when checking for equivalence
+	// https://tools.ietf.org/html/rfc4120#section-6.2 - the name type is not significant when checking for equivalence
 	for i, s := range pn.NameString {
 		if n.NameString[i] != s {
 			return false
 		}
 	}
 	return true
+}
+
+func (pn PrincipalName) IsZero() bool {
+	return pn.NameType == 0 && len(pn.NameString) == 0
 }
 
 // PrincipalNameString returns the PrincipalName in string form.

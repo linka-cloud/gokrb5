@@ -100,6 +100,7 @@ func NewFromCCache(c *credentials.CCache, krb5conf *config.Config, settings ...f
 			return cl, fmt.Errorf("cache entry ticket bytes are not valid: %v", err)
 		}
 		cl.cache.addEntry(
+			cred.Client.PrincipalName,
 			tkt,
 			cred.AuthTime,
 			cred.StartTime,

@@ -14,13 +14,30 @@ func (cl *Client) TGSREQGenerateAndExchange(spn types.PrincipalName, kdcRealm st
 	if err != nil {
 		return tgsReq, tgsRep, krberror.Errorf(err, krberror.KRBMsgError, "TGS Exchange Error: failed to generate a new TGS_REQ")
 	}
-	return cl.TGSExchange(tgsReq, kdcRealm, tgsRep.Ticket, sessionKey, 0)
+	return cl.TGSExchange(tgsReq, kdcRealm, tgsRep.Ticket, sessionKey, 0, types.PrincipalName{})
+}
+
+// S4U2SelfTGSREQGenerateAndExchange generates the TGS_REQ with PA_FOR_USER and performs a TGS exchange to retrieve a ticket to the specified SPN.
+func (cl *Client) S4U2SelfTGSREQGenerateAndExchange(uname types.PrincipalName, kdcRealm string, tgt messages.Ticket, sessionKey types.EncryptionKey, renewal bool) (tgsReq messages.TGSReq, tgsRep messages.TGSRep, err error) {
+	tgsReq, err = messages.NewS4U2SelfTGSReq(cl.Credentials.CName(), uname, kdcRealm, cl.Config, tgt, sessionKey, renewal)
+	if err != nil {
+		return tgsReq, tgsRep, krberror.Errorf(err, krberror.KRBMsgError, "TGS Exchange Error: failed to generate a new TGS_REQ")
+	}
+	return cl.TGSExchange(tgsReq, kdcRealm, tgsRep.Ticket, sessionKey, 0, uname)
+}
+
+func (cl *Client) S4U2ProxyTGSREQGenerateAndExchange(uname types.PrincipalName, spn types.PrincipalName, kdcRealm string, tgt messages.Ticket, sessionKey types.EncryptionKey, renewal bool, s4u2SelfTGT messages.Ticket) (tgsReq messages.TGSReq, tgsRep messages.TGSRep, err error) {
+	tgsReq, err = messages.NewS4U2ProxyTGSReq(cl.Credentials.CName(), kdcRealm, cl.Config, tgt, sessionKey, spn, renewal, s4u2SelfTGT)
+	if err != nil {
+		return tgsReq, tgsRep, krberror.Errorf(err, krberror.KRBMsgError, "TGS Exchange Error: failed to generate a new TGS_REQ")
+	}
+	return cl.TGSExchange(tgsReq, kdcRealm, tgsRep.Ticket, sessionKey, 0, uname)
 }
 
 // TGSExchange exchanges the provided TGS_REQ with the KDC to retrieve a TGS_REP.
 // Referrals are automatically handled.
 // The client's cache is updated with the ticket received.
-func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messages.Ticket, sessionKey types.EncryptionKey, referral int) (messages.TGSReq, messages.TGSRep, error) {
+func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messages.Ticket, sessionKey types.EncryptionKey, referral int, impersonated types.PrincipalName) (messages.TGSReq, messages.TGSRep, error) {
 	var tgsRep messages.TGSRep
 	b, err := tgsReq.Marshal()
 	if err != nil {
@@ -41,7 +58,7 @@ func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messa
 	if err != nil {
 		return tgsReq, tgsRep, krberror.Errorf(err, krberror.EncodingError, "TGS Exchange Error: failed to process the TGS_REP")
 	}
-	if ok, err := tgsRep.Verify(cl.Config, tgsReq); !ok {
+	if ok, err := tgsRep.Verify(cl.Config, tgsReq, impersonated); !ok {
 		return tgsReq, tgsRep, krberror.Errorf(err, krberror.EncodingError, "TGS Exchange Error: TGS_REP is not valid")
 	}
 
@@ -64,17 +81,24 @@ func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messa
 		if err != nil {
 			return tgsReq, tgsRep, err
 		}
-		return cl.TGSExchange(tgsReq, realm, tgsRep.Ticket, tgsRep.DecryptedEncPart.Key, referral)
+		return cl.TGSExchange(tgsReq, realm, tgsRep.Ticket, tgsRep.DecryptedEncPart.Key, referral, impersonated)
 	}
-	cl.cache.addEntry(
-		tgsRep.Ticket,
-		tgsRep.DecryptedEncPart.AuthTime,
-		tgsRep.DecryptedEncPart.StartTime,
-		tgsRep.DecryptedEncPart.EndTime,
-		tgsRep.DecryptedEncPart.RenewTill,
-		tgsRep.DecryptedEncPart.Key,
-	)
-	cl.Log("ticket added to cache for %s (EndTime: %v)", tgsRep.Ticket.SName.PrincipalNameString(), tgsRep.DecryptedEncPart.EndTime)
+	if !tgsReq.ReqBody.CName.IsZero() {
+		cname := tgsRep.CName
+		if !impersonated.IsZero() {
+			cname = impersonated
+		}
+		cl.cache.addEntry(
+			cname,
+			tgsRep.Ticket,
+			tgsRep.DecryptedEncPart.AuthTime,
+			tgsRep.DecryptedEncPart.StartTime,
+			tgsRep.DecryptedEncPart.EndTime,
+			tgsRep.DecryptedEncPart.RenewTill,
+			tgsRep.DecryptedEncPart.Key,
+		)
+		cl.Log("ticket added to cache for %s (%s) (EndTime: %v)", tgsRep.Ticket.SName.PrincipalNameString(), tgsReq.ReqBody.CName.PrincipalNameString(), tgsRep.DecryptedEncPart.EndTime)
+	}
 	return tgsReq, tgsRep, err
 }
 
@@ -84,7 +108,7 @@ func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messa
 func (cl *Client) GetServiceTicket(spn string) (messages.Ticket, types.EncryptionKey, error) {
 	var tkt messages.Ticket
 	var skey types.EncryptionKey
-	if tkt, skey, ok := cl.GetCachedTicket(spn); ok {
+	if tkt, skey, ok := cl.GetCachedTicket(cl.Credentials.CName().PrincipalNameString(), spn); ok {
 		// Already a valid ticket in the cache
 		return tkt, skey, nil
 	}
@@ -99,5 +123,32 @@ func (cl *Client) GetServiceTicket(spn string) (messages.Ticket, types.Encryptio
 	if err != nil {
 		return tkt, skey, err
 	}
+	return tgsRep.Ticket, tgsRep.DecryptedEncPart.Key, nil
+}
+
+func (cl *Client) Impersonate(user string, spn string) (messages.Ticket, types.EncryptionKey, error) {
+	var tkt messages.Ticket
+	var skey types.EncryptionKey
+	if tkt, skey, ok := cl.GetCachedTicket(user, spn); ok {
+		// Already a valid ticket in the cache
+		return tkt, skey, nil
+	}
+	uname := types.NewPrincipalName(nametype.KRB_NT_PRINCIPAL, user)
+	princ := types.NewPrincipalName(nametype.KRB_NT_PRINCIPAL, spn)
+	realm := cl.Config.ResolveRealm(uname.NameString[len(uname.NameString)-1])
+
+	tgt, skey, err := cl.sessionTGT(realm)
+	if err != nil {
+		return tkt, skey, err
+	}
+	_, tgsRep, err := cl.S4U2SelfTGSREQGenerateAndExchange(uname, realm, tgt, skey, false)
+	if err != nil {
+		return tkt, skey, err
+	}
+	_, tgsRep, err = cl.S4U2ProxyTGSREQGenerateAndExchange(uname, princ, realm, tgt, skey, false, tgsRep.Ticket)
+	if err != nil {
+		return tkt, skey, err
+	}
+	cl.Log("TGT acquired to %s for %s (%s)", princ.PrincipalNameString(), uname.PrincipalNameString(), cl.Credentials.CName().PrincipalNameString())
 	return tgsRep.Ticket, tgsRep.DecryptedEncPart.Key, nil
 }

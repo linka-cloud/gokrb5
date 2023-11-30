@@ -8,9 +8,8 @@ import (
 	"fmt"
 
 	"github.com/jcmturner/gofork/encoding/asn1"
+
 	"github.com/jcmturner/gokrb5/v8/asn1tools"
-	"github.com/jcmturner/gokrb5/v8/client"
-	"github.com/jcmturner/gokrb5/v8/credentials"
 	"github.com/jcmturner/gokrb5/v8/gssapi"
 	"github.com/jcmturner/gokrb5/v8/iana/chksumtype"
 	"github.com/jcmturner/gokrb5/v8/iana/msgtype"
@@ -161,14 +160,14 @@ func (m *KRB5Token) Context() context.Context {
 }
 
 // NewKRB5TokenAPREQ creates a new KRB5 token with AP_REQ
-func NewKRB5TokenAPREQ(cl *client.Client, tkt messages.Ticket, sessionKey types.EncryptionKey, GSSAPIFlags []int, APOptions []int) (KRB5Token, error) {
+func NewKRB5TokenAPREQ(cname types.PrincipalName, domain string, tkt messages.Ticket, sessionKey types.EncryptionKey, GSSAPIFlags []int, APOptions []int) (KRB5Token, error) {
 	// TODO consider providing the SPN rather than the specific tkt and key and get these from the krb client.
 	var m KRB5Token
 	m.OID = gssapi.OIDKRB5.OID()
 	tb, _ := hex.DecodeString(TOK_ID_KRB_AP_REQ)
 	m.tokID = tb
 
-	auth, err := krb5TokenAuthenticator(cl.Credentials, GSSAPIFlags)
+	auth, err := krb5TokenAuthenticator(cname, domain, GSSAPIFlags)
 	if err != nil {
 		return m, err
 	}
@@ -188,9 +187,9 @@ func NewKRB5TokenAPREQ(cl *client.Client, tkt messages.Ticket, sessionKey types.
 }
 
 // krb5TokenAuthenticator creates a new kerberos authenticator for kerberos MechToken
-func krb5TokenAuthenticator(creds *credentials.Credentials, flags []int) (types.Authenticator, error) {
-	//RFC 4121 Section 4.1.1
-	auth, err := types.NewAuthenticator(creds.Domain(), creds.CName())
+func krb5TokenAuthenticator(cname types.PrincipalName, domain string, flags []int) (types.Authenticator, error) {
+	// RFC 4121 Section 4.1.1
+	auth, err := types.NewAuthenticator(domain, cname)
 	if err != nil {
 		return auth, krberror.Errorf(err, krberror.KRBMsgError, "error generating new authenticator")
 	}

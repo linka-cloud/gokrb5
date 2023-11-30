@@ -6,15 +6,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
+	"github.com/jcmturner/gokrb5/v8/iana/nametype"
 	"github.com/jcmturner/gokrb5/v8/messages"
 	"github.com/jcmturner/gokrb5/v8/types"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestCache_addEntry_getEntry_remove_clear(t *testing.T) {
 	t.Parallel()
 	c := NewCache()
 	cnt := 10
+	me := "me"
 	var wg sync.WaitGroup
 	for i := 0; i < cnt; i++ {
 		wg.Add(1)
@@ -29,7 +32,7 @@ func TestCache_addEntry_getEntry_remove_clear(t *testing.T) {
 			KeyValue: []byte{byte(i)},
 		}
 		go func(i int) {
-			e := c.addEntry(tkt, time.Unix(int64(0+i), 0).UTC(), time.Unix(int64(10+i), 0).UTC(), time.Unix(int64(20+i), 0).UTC(), time.Unix(int64(30+i), 0).UTC(), key)
+			e := c.addEntry(types.NewPrincipalName(nametype.KRB_NT_PRINCIPAL, me), tkt, time.Unix(int64(0+i), 0).UTC(), time.Unix(int64(10+i), 0).UTC(), time.Unix(int64(20+i), 0).UTC(), time.Unix(int64(30+i), 0).UTC(), key)
 			assert.Equal(t, fmt.Sprintf("%d/test.cache", i), e.SPN, "SPN cache key not as expected")
 			wg.Done()
 		}(i)
@@ -38,7 +41,7 @@ func TestCache_addEntry_getEntry_remove_clear(t *testing.T) {
 	for i := 0; i < cnt; i++ {
 		wg.Add(1)
 		go func(i int) {
-			e, ok := c.getEntry(fmt.Sprintf("%d/test.cache", i))
+			e, ok := c.getEntry(me, fmt.Sprintf("%d/test.cache", i))
 			assert.True(t, ok, "cache entry %d was not found", i)
 			assert.Equal(t, time.Unix(int64(0+i), 0).UTC(), e.AuthTime, "auth time not as expected")
 			assert.Equal(t, time.Unix(int64(10+i), 0).UTC(), e.StartTime, "start time not as expected")
@@ -50,14 +53,14 @@ func TestCache_addEntry_getEntry_remove_clear(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	_, ok := c.getEntry(fmt.Sprintf("%d/test.cache", cnt+1))
+	_, ok := c.getEntry(me, fmt.Sprintf("%d/test.cache", cnt+1))
 	assert.False(t, ok, "entry found in cache when it shouldn't have been")
 
 	// Remove just the even entries
 	for i := 0; i < cnt; i += 2 {
 		wg.Add(1)
 		go func(i int) {
-			c.RemoveEntry(fmt.Sprintf("%d/test.cache", i))
+			c.RemoveEntry(me, fmt.Sprintf("%d/test.cache", i))
 			wg.Done()
 		}(i)
 	}
@@ -67,10 +70,10 @@ func TestCache_addEntry_getEntry_remove_clear(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			if i%2 == 0 {
-				_, ok := c.getEntry(fmt.Sprintf("%d/test.cache", cnt+1))
+				_, ok := c.getEntry(me, fmt.Sprintf("%d/test.cache", cnt+1))
 				assert.False(t, ok, "entry %d found in cache when it shouldn't have been", i)
 			} else {
-				e, ok := c.getEntry(fmt.Sprintf("%d/test.cache", i))
+				e, ok := c.getEntry(me, fmt.Sprintf("%d/test.cache", i))
 				assert.True(t, ok, "cache entry %d was not found", i)
 				assert.Equal(t, time.Unix(int64(0+i), 0).UTC(), e.AuthTime, "auth time not as expected")
 				assert.Equal(t, time.Unix(int64(10+i), 0).UTC(), e.StartTime, "start time not as expected")
@@ -89,7 +92,7 @@ func TestCache_addEntry_getEntry_remove_clear(t *testing.T) {
 	for i := 0; i < cnt; i++ {
 		wg.Add(1)
 		go func(i int) {
-			_, ok := c.getEntry(fmt.Sprintf("%d/test.cache", cnt+1))
+			_, ok := c.getEntry(me, fmt.Sprintf("%d/test.cache", cnt+1))
 			assert.False(t, ok, "entry %d found in cache when it shouldn't have been", i)
 			wg.Done()
 		}(i)
@@ -112,7 +115,7 @@ func TestCache_JSON(t *testing.T) {
 			KeyType:  1,
 			KeyValue: []byte{byte(i)},
 		}
-		e := c.addEntry(tkt, time.Unix(int64(0+i), 0).UTC(), time.Unix(int64(10+i), 0).UTC(), time.Unix(int64(20+i), 0).UTC(), time.Unix(int64(30+i), 0).UTC(), key)
+		e := c.addEntry(types.NewPrincipalName(nametype.KRB_NT_PRINCIPAL, "me"), tkt, time.Unix(int64(0+i), 0).UTC(), time.Unix(int64(10+i), 0).UTC(), time.Unix(int64(20+i), 0).UTC(), time.Unix(int64(30+i), 0).UTC(), key)
 		assert.Equal(t, fmt.Sprintf("%d/test.cache", i), e.SPN, "SPN cache key not as expected")
 	}
 	expected := `[

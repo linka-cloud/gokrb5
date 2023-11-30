@@ -5,12 +5,14 @@ package messages
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
 	"time"
 
 	"github.com/jcmturner/gofork/encoding/asn1"
+
 	"github.com/jcmturner/gokrb5/v8/asn1tools"
 	"github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/crypto"
@@ -155,7 +157,7 @@ func NewASReq(realm string, c *config.Config, cname, sname types.PrincipalName) 
 
 // NewTGSReq generates a new KRB_TGS_REQ struct.
 func NewTGSReq(cname types.PrincipalName, kdcRealm string, c *config.Config, tgt Ticket, sessionKey types.EncryptionKey, sname types.PrincipalName, renewal bool) (TGSReq, error) {
-	a, err := tgsReq(cname, sname, kdcRealm, renewal, c)
+	a, err := tgsReq(cname, sname, kdcRealm, renewal, c, nil)
 	if err != nil {
 		return a, err
 	}
@@ -165,7 +167,7 @@ func NewTGSReq(cname types.PrincipalName, kdcRealm string, c *config.Config, tgt
 
 // NewUser2UserTGSReq returns a TGS-REQ suitable for user-to-user authentication (https://tools.ietf.org/html/rfc4120#section-3.7)
 func NewUser2UserTGSReq(cname types.PrincipalName, kdcRealm string, c *config.Config, clientTGT Ticket, sessionKey types.EncryptionKey, sname types.PrincipalName, renewal bool, verifyingTGT Ticket) (TGSReq, error) {
-	a, err := tgsReq(cname, sname, kdcRealm, renewal, c)
+	a, err := tgsReq(cname, sname, kdcRealm, renewal, c, nil)
 	if err != nil {
 		return a, err
 	}
@@ -175,8 +177,38 @@ func NewUser2UserTGSReq(cname types.PrincipalName, kdcRealm string, c *config.Co
 	return a, err
 }
 
+// NewS4U2SelfTGSReq return a TGS-REQ suitable for s4u2self delegation
+// https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/36a72c74-7995-4cba-a2d2-6c9471a2a6af
+func NewS4U2SelfTGSReq(cname types.PrincipalName, uname types.PrincipalName, kdcRealm string, c *config.Config, tgt Ticket, sessionKey types.EncryptionKey, renewal bool) (TGSReq, error) {
+	f := true
+	a, err := tgsReq(types.PrincipalName{}, cname, kdcRealm, renewal, c, &f)
+	if err != nil {
+		return a, err
+	}
+	if err := a.setPAData(tgt, sessionKey); err != nil {
+		return a, err
+	}
+	if err := a.setPAForUser(uname, kdcRealm, sessionKey); err != nil {
+		return a, err
+	}
+	return a, err
+}
+
+// NewS4U2ProxyTGSReq return a TGS-REQ suitable for s4u2proxy delegation
+// https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/ddb2cafd-1f01-4834-b52a-d4a5b34cd960
+func NewS4U2ProxyTGSReq(cname types.PrincipalName, kdcRealm string, c *config.Config, tgt Ticket, sessionKey types.EncryptionKey, sname types.PrincipalName, renewal bool, impersonated Ticket) (TGSReq, error) {
+	a, err := tgsReq(cname, sname, kdcRealm, renewal, c, nil)
+	if err != nil {
+		return a, err
+	}
+	a.ReqBody.AdditionalTickets = []Ticket{impersonated}
+	types.SetFlag(&a.ReqBody.KDCOptions, flags.ConstrainedDelegation)
+	err = a.setPAData(tgt, sessionKey)
+	return a, err
+}
+
 // tgsReq populates the fields for a TGS_REQ
-func tgsReq(cname, sname types.PrincipalName, kdcRealm string, renewal bool, c *config.Config) (TGSReq, error) {
+func tgsReq(cname, sname types.PrincipalName, kdcRealm string, renewal bool, c *config.Config, forwardable *bool) (TGSReq, error) {
 	nonce, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt32))
 	if err != nil {
 		return TGSReq{}, err
@@ -196,7 +228,7 @@ func tgsReq(cname, sname types.PrincipalName, kdcRealm string, renewal bool, c *
 		},
 		Renewal: renewal,
 	}
-	if c.LibDefaults.Forwardable {
+	if (forwardable == nil && c.LibDefaults.Forwardable) || (forwardable != nil && *forwardable) {
 		types.SetFlag(&k.ReqBody.KDCOptions, flags.Forwardable)
 	}
 	if c.LibDefaults.Canonicalize {
@@ -243,7 +275,11 @@ func (k *TGSReq) setPAData(tgt Ticket, sessionKey types.EncryptionKey) error {
 
 	// Form PAData for TGS_REQ
 	// Create authenticator
-	auth, err := types.NewAuthenticator(tgt.Realm, k.ReqBody.CName)
+	p := k.ReqBody.CName
+	if p.IsZero() {
+		p = k.ReqBody.SName
+	}
+	auth, err := types.NewAuthenticator(tgt.Realm, p)
 	if err != nil {
 		return krberror.Errorf(err, krberror.KRBMsgError, "error generating new authenticator")
 	}
@@ -266,6 +302,26 @@ func (k *TGSReq) setPAData(tgt Ticket, sessionKey types.EncryptionKey) error {
 			PADataValue: apb,
 		},
 	}
+	return nil
+}
+
+func (a *TGSReq) setPAForUser(uname types.PrincipalName, kdcRealm string, sessionKey types.EncryptionKey) error {
+	pa := PAData4User{
+		User:  uname,
+		Realm: kdcRealm,
+		Auth:  "Kerberos",
+	}
+	if err := pa.SetChecksum(sessionKey); err != nil {
+		return err
+	}
+	b, err := pa.Marshal()
+	if err != nil {
+		return krberror.Errorf(err, krberror.EncodingError, "error marshaling PA_FOR_USER body")
+	}
+	a.PAData = append(a.PAData, types.PAData{
+		PADataType:  patype.PA_FOR_USER,
+		PADataValue: b,
+	})
 	return nil
 }
 
@@ -419,7 +475,7 @@ func (k *KDCReqBody) Marshal() ([]byte, error) {
 	if err != nil {
 		return b, krberror.Errorf(err, krberror.EncodingError, "error in marshaling KDC request body additional tickets")
 	}
-	//The asn1.rawValue needs the tag setting on it for where it is in the KDCReqBody
+	// The asn1.rawValue needs the tag setting on it for where it is in the KDCReqBody
 	rawtkts.Tag = 11
 	if len(rawtkts.Bytes) > 0 {
 		m.AdditionalTickets = rawtkts
@@ -429,4 +485,59 @@ func (k *KDCReqBody) Marshal() ([]byte, error) {
 		return b, krberror.Errorf(err, krberror.EncodingError, "error in marshaling KDC request body")
 	}
 	return b, nil
+}
+
+// https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/aceb70de-40f0-4409-87fa-df00ca145f5a
+// PAForUser implements RFC 4120 PA-FOR-USER
+type PAData4User struct {
+	User     types.PrincipalName `asn1:"explicit,tag:0"`
+	Realm    string              `asn1:"generalstring,explicit,tag:1"`
+	Checksum types.Checksum      `asn1:"explicit,tag:2"`
+	Auth     string              `asn1:"generalstring,explicit,tag:3"`
+}
+
+// SetChecksum sets the checksum on the PAData4User.
+// cksum: A checksum of userName, userRealm, and auth-package.
+// This is calculated using the KERB_CHECKSUM_HMAC_MD5 function ([RFC4757]).
+// The value of the userName.name-type is first encoded as a 4-byte integer in little endian byte order,
+// then these 4 bytes are concatenated with all string values in the sequence of strings contained
+// in the userName.name-string field, then the string value of the userRealm field,
+// and then the string value of auth-package field, in that order,
+// to form a byte array which can be called S4UByteArray.
+// Note that, in the computation of S4UByteArray, the null terminator is not included when concatenating the strings.
+// Finally cksum is computed by calling the KERB_CHECKSUM_HMAC_MD5 hash with the following three parameters:
+// the session key of the TGT of the service performing the S4U2self request,
+// the message type value of 17, and the byte array S4UByteArray.
+func (pa *PAData4User) SetChecksum(sessionKey types.EncryptionKey) error {
+	// create the S4UByteArray
+	// Add the name-type
+	b := binary.LittleEndian.AppendUint32(nil, uint32(pa.User.NameType))
+	// Add the name-string
+	// Add the realm
+	// Add the auth-package
+	for _, s := range append(pa.User.NameString, pa.Realm, pa.Auth) {
+		b = append(b, []byte(s)...)
+	}
+	etype, err := crypto.GetEtype(sessionKey.KeyType)
+	if err != nil {
+		return krberror.Errorf(err, krberror.EncryptingError, "error getting etype to encrypt authenticator")
+	}
+	cb, err := etype.GetChecksumHash(sessionKey.KeyValue, b, keyusage.KERB_NON_KERB_CKSUM_SALT)
+	if err != nil {
+		return krberror.Errorf(err, krberror.ChksumError, "error getting etype checksum hash")
+	}
+	pa.Checksum = types.Checksum{
+		CksumType: etype.GetHashID(),
+		Checksum:  cb,
+	}
+	return nil
+}
+
+func (pa *PAData4User) Unmarshal(b []byte) error {
+	_, err := asn1.Unmarshal(b, pa)
+	return err
+}
+
+func (pa *PAData4User) Marshal() ([]byte, error) {
+	return asn1.Marshal(*pa)
 }
