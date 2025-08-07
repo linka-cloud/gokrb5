@@ -57,6 +57,20 @@ func (s *Settings) AssumePreAuthentication() bool {
 	return s.assumePreAuthentication
 }
 
+// PreAuthEType used to configure the preauthentication encryption type.
+//
+// s := NewSettings(PreAuthEType(true))
+func PreAuthEType(e int32) func(*Settings) {
+	return func(s *Settings) {
+		s.preAuthEType = e
+	}
+}
+
+// PreAuthEType indicates the preautneitcation encryption type.
+func (s *Settings) PreAuthEType() int32 {
+	return s.preAuthEType
+}
+
 // Logger used to configure client with a logger.
 //
 // s := NewSettings(kt, Logger(l))

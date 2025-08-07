@@ -4,6 +4,7 @@ package messages
 // Section: 5.4.2
 
 import (
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -229,7 +230,17 @@ func (k *ASRep) DecryptEncPart(c *credentials.Credentials) (types.EncryptionKey,
 			return key, krberror.Errorf(err, krberror.DecryptingError, "error decrypting AS_REP encrypted part")
 		}
 	}
-	if !c.HasKeytab() && !c.HasPassword() {
+	if c.HasNTHash() {
+		hash, err := hex.DecodeString(c.NTHash())
+		if err != nil {
+			return key, krberror.Errorf(err, krberror.DecryptingError, "error decrypting AS_REP encrypted part")
+		}
+		key = types.EncryptionKey{
+			KeyType:  k.EncPart.EType,
+			KeyValue: hash,
+		}
+	}
+	if !c.HasKeytab() && !c.HasPassword() && !c.HasNTHash() {
 		return key, krberror.NewErrorf(krberror.DecryptingError, "no secret available in credentials to perform decryption of AS_REP encrypted part")
 	}
 	b, err := crypto.DecryptEncPart(k.EncPart, key, keyusage.AS_REP_ENCPART)
