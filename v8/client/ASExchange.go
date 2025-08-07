@@ -33,7 +33,18 @@ func (cl *Client) ASExchange(realm string, ASReq messages.ASReq, referral int) (
 	if err != nil {
 		if e, ok := err.(messages.KRBError); ok {
 			switch e.ErrorCode {
-			case errorcode.KDC_ERR_PREAUTH_REQUIRED, errorcode.KDC_ERR_PREAUTH_FAILED:
+			case errorcode.KDC_ERR_PREAUTH_FAILED:
+				// Custom (kerbrute) handling for failed pre-authentication
+				// In the previous handling, gokrb5 would attempt to parse the failed pre-auth AS-REP, extract the
+				// requested encryption type and attempt a follow up pre-authentication attempt.
+				// This causes two potential issues specifically for kerbrute:
+				//   1. We are forcing pre-auth, so if pre-auth fails we do NOT want to perform a second authentication
+				//      as it increments the user's badPwdCount.
+				//   2. If we provide an NT hash that is explicitly using RC4-HMAC encryption, the response encryption
+				//      type will likely be different and cause several errors later on when the timestamp is attempted
+				//      to be encrypted.
+				return messages.ASRep{}, krberror.Errorf(err, krberror.KDCError, "AS Exchange Error: kerberos error response from KDC")
+			case errorcode.KDC_ERR_PREAUTH_REQUIRED:
 				// From now on assume this client will need to do this pre-auth and set the PAData
 				cl.settings.assumePreAuthentication = true
 				err = setPAData(cl, &e, &ASReq)
@@ -145,7 +156,7 @@ func setPAData(cl *Client, krberr *messages.KRBError, ASReq *messages.ASReq) err
 
 // preAuthEType establishes what encryption type to use for pre-authentication from the KRBError returned from the KDC.
 func preAuthEType(krberr *messages.KRBError) (etype etype.EType, err error) {
-	//RFC 4120 5.2.7.5 covers the preference order of ETYPE-INFO2 and ETYPE-INFO.
+	// RFC 4120 5.2.7.5 covers the preference order of ETYPE-INFO2 and ETYPE-INFO.
 	var etypeID int32
 	var pas types.PADataSequence
 	e := pas.Unmarshal(krberr.EData)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-uuid"
+
 	"github.com/jcmturner/gokrb5/v8/iana/nametype"
 	"github.com/jcmturner/gokrb5/v8/keytab"
 	"github.com/jcmturner/gokrb5/v8/types"
@@ -28,6 +29,7 @@ type Credentials struct {
 	cname           types.PrincipalName
 	keytab          *keytab.Keytab
 	password        string
+	nthash          string
 	attributes      map[string]interface{}
 	validUntil      time.Time
 	authenticated   bool
@@ -46,6 +48,7 @@ type marshalCredentials struct {
 	CName           types.PrincipalName `json:"-"`
 	Keytab          bool
 	Password        bool
+	NTHash          bool
 	Attributes      map[string]interface{} `json:"-"`
 	ValidUntil      time.Time
 	Authenticated   bool
@@ -131,6 +134,27 @@ func (c *Credentials) Password() string {
 // HasPassword queries if the Credentials has a password defined.
 func (c *Credentials) HasPassword() bool {
 	if c.password != "" {
+		return true
+	}
+	return false
+}
+
+// WithNTHash sets the password hash in the Credentials struct.
+func (c *Credentials) WithNTHash(hash string) *Credentials {
+	c.nthash = hash
+	c.password = ""
+	c.keytab = keytab.New() // clear any keytab
+	return c
+}
+
+// NTHash returns the credential's password hash.
+func (c *Credentials) NTHash() string {
+	return c.nthash
+}
+
+// HasNTHash queries if the Credentials has a password hash defined.
+func (c *Credentials) HasNTHash() bool {
+	if c.nthash != "" {
 		return true
 	}
 	return false
@@ -342,6 +366,7 @@ func (c *Credentials) Marshal() ([]byte, error) {
 		CName:           c.cname,
 		Keytab:          c.HasKeytab(),
 		Password:        c.HasPassword(),
+		NTHash:          c.HasNTHash(),
 		Attributes:      c.attributes,
 		ValidUntil:      c.validUntil,
 		Authenticated:   c.authenticated,
@@ -391,6 +416,7 @@ func (c *Credentials) JSON() (string, error) {
 		CName:         c.cname,
 		Keytab:        c.HasKeytab(),
 		Password:      c.HasPassword(),
+		NTHash:        c.HasNTHash(),
 		ValidUntil:    c.validUntil,
 		Authenticated: c.authenticated,
 		Human:         c.human,
