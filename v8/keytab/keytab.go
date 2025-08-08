@@ -133,6 +133,15 @@ func (kt *Keytab) AddEntry(principalName, realm, password string, ts time.Time, 
 		return err
 	}
 
+	kt.AddKeyEntry(principalName, realm, key, ts, KVNO)
+	return nil
+}
+
+// AddKeyEntry adds an entry to the keytab.
+func (kt *Keytab) AddKeyEntry(principalName, realm string, key types.EncryptionKey, ts time.Time, KVNO uint8) {
+	// Generate a key from the password
+	princ, _ := types.ParseSPNString(principalName)
+
 	// Populate the keytab entry principal
 	ktep := newPrincipal()
 	ktep.NumComponents = int16(len(princ.NameString))
@@ -153,7 +162,6 @@ func (kt *Keytab) AddEntry(principalName, realm, password string, ts time.Time, 
 	e.Key = key
 
 	kt.Entries = append(kt.Entries, e)
-	return nil
 }
 
 // Create a new principal.
@@ -207,17 +215,17 @@ func (kt *Keytab) Unmarshal(b []byte) error {
 		return fmt.Errorf("byte array is less than 2 bytes: %d", len(b))
 	}
 
-	//The first byte of the file always has the value 5
+	// The first byte of the file always has the value 5
 	if b[0] != keytabFirstByte {
 		return errors.New("invalid keytab data. First byte does not equal 5")
 	}
-	//Get keytab version
-	//The 2nd byte contains the version number (1 or 2)
+	// Get keytab version
+	// The 2nd byte contains the version number (1 or 2)
 	kt.version = b[1]
 	if kt.version != 1 && kt.version != 2 {
 		return errors.New("invalid keytab data. Keytab version is neither 1 nor 2")
 	}
-	//Version 1 of the file format uses native byte order for integer representations. Version 2 always uses big-endian byte order
+	// Version 1 of the file format uses native byte order for integer representations. Version 2 always uses big-endian byte order
 	var endian binary.ByteOrder
 	endian = binary.BigEndian
 	if kt.version == 1 && isNativeEndianLittle() {
@@ -231,7 +239,7 @@ func (kt *Keytab) Unmarshal(b []byte) error {
 	}
 	for l != 0 {
 		if l < 0 {
-			//Zero padded so skip over
+			// Zero padded so skip over
 			l = l * -1
 			n = n + int(l)
 		} else {
@@ -350,7 +358,7 @@ func parsePrincipal(b []byte, p *int, kt *Keytab, ke *entry, e *binary.ByteOrder
 		return err
 	}
 	if kt.version == 1 {
-		//In version 1 the number of components includes the realm. Minus 1 to make consistent with version 2
+		// In version 1 the number of components includes the realm. Minus 1 to make consistent with version 2
 		ke.Principal.NumComponents--
 	}
 	lenRealm, err := readInt16(b, p, e)
@@ -374,7 +382,7 @@ func parsePrincipal(b []byte, p *int, kt *Keytab, ke *entry, e *binary.ByteOrder
 		ke.Principal.Components = append(ke.Principal.Components, string(compB))
 	}
 	if kt.version != 1 {
-		//Name Type is omitted in version 1
+		// Name Type is omitted in version 1
 		ke.Principal.NameType, err = readInt32(b, p, e)
 		if err != nil {
 			return err
@@ -384,7 +392,7 @@ func parsePrincipal(b []byte, p *int, kt *Keytab, ke *entry, e *binary.ByteOrder
 }
 
 func (p principal) marshal(v int) ([]byte, error) {
-	//var b []byte
+	// var b []byte
 	b := make([]byte, 2)
 	var endian binary.ByteOrder
 	endian = binary.BigEndian
